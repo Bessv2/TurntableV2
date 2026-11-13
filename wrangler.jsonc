@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "listening-room",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/ws/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "ROOM", "class_name": "Room" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "vars": {
+    // Public Spotify client ID (not a secret). Leave empty to disable Spotify.
+    "SPOTIFY_CLIENT_ID": ""
+  }
+  // Secrets (set with `npx wrangler secret put NAME`):
+  //   YOUTUBE_API_KEY        required for search-to-YouTube matching
+  //   SPOTIFY_CLIENT_SECRET  optional, enables Spotify catalog search
+  //   GIPHY_API_KEY          optional, enables GIF search
+  //   ROOM_PASSWORD          optional, shared passphrase to enter rooms
+}

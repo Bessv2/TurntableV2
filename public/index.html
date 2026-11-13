@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Listening Room</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎧</text></svg>">
+</head>
+<body>
+  <!-- Entry -->
+  <div id="entry" class="modal">
+    <form id="entryForm" class="card">
+      <h1>🎧 Listening Room</h1>
+      <label>Your name <input id="nameInput" maxlength="32" required autocomplete="nickname"></label>
+      <label id="passRow" hidden>Room password <input id="passInput" type="password"></label>
+      <button type="submit" class="primary">Enter room</button>
+      <p class="muted small" id="entryError"></p>
+    </form>
+  </div>
+
+  <header>
+    <div class="brand">🎧 <span id="roomName">main</span></div>
+    <div class="controls">
+      <button id="tuneIn" class="primary">▶ Tune in</button>
+      <button id="spotifyBtn" hidden>Connect Spotify</button>
+      <span id="sourceBadge" class="badge" hidden></span>
+      <label class="vol">🔊 <input id="volume" type="range" min="0" max="100" value="70"></label>
+      <span id="conn" class="dot" title="Connection"></span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Stage -->
+    <section class="panel stage">
+      <div class="nowplaying">
+        <div class="art-wrap">
+          <img id="npArt" alt="">
+          <div id="ytHolder"><div id="ytPlayer"></div></div>
+        </div>
+        <div class="np-info">
+          <div class="muted small" id="npDj">Nobody's playing</div>
+          <div class="np-title" id="npTitle">Step up to DJ to start the music</div>
+          <div class="np-artist" id="npArtist"></div>
+          <div class="progress"><div id="npBar"></div></div>
+          <div class="np-time muted small"><span id="npPos">0:00</span><span id="npDur">0:00</span></div>
+          <div class="vote-row">
+            <button id="awesome" class="vote">👍 Awesome <b id="awesomeCount">0</b></button>
+            <button id="lame" class="vote">👎 Lame <b id="lameCount">0</b></button>
+            <button id="skip" hidden>Skip my song</button>
+          </div>
+          <div id="playNote" class="muted small"></div>
+        </div>
+      </div>
+
+      <h3>Stage</h3>
+      <div id="seats" class="seats"></div>
+      <button id="stageBtn" class="primary">Step up to DJ</button>
+
+      <h3>Audience</h3>
+      <div id="audience" class="audience"></div>
+    </section>
+
+    <!-- Chat -->
+    <section class="panel chat">
+      <div id="messages" class="messages"></div>
+      <div id="gifPanel" class="gif-panel" hidden>
+        <input id="gifSearch" placeholder="Search GIFs…">
+        <div id="gifGrid" class="gif-grid"></div>
+      </div>
+      <form id="chatForm" class="chat-form">
+        <button type="button" id="gifBtn" title="GIFs">GIF</button>
+        <input id="chatInput" maxlength="500" placeholder="Say something…" autocomplete="off">
+        <button class="primary">Send</button>
+      </form>
+    </section>
+
+    <!-- Queue -->
+    <section class="panel queue">
+      <form id="searchForm" class="search">
+        <input id="searchInput" placeholder="Search songs or paste a YouTube link">
+        <button class="primary">Search</button>
+      </form>
+      <div id="searchStatus" class="muted small"></div>
+      <div id="results" class="list"></div>
+      <h3>My queue <span class="muted small">(only you can see this)</span></h3>
+      <div id="queue" class="list"></div>
+    </section>
+  </main>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
