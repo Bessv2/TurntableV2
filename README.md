@@ -6,16 +6,25 @@ A small Turntable.fm-style group listening room that runs entirely on Cloudflare
 - Each person's queue is private, so nobody sees what's coming until it plays.
 - 👍 Awesome / 👎 Lame voting. Each Awesome is a point for the DJ. A song is voted off when 2+ Lame votes are more than half the listeners.
 - Chat with GIF search (Giphy). Pasted image or GIF links show inline.
-- Song search uses Spotify's catalog, or iTunes when Spotify isn't set up. Each song is matched to a YouTube upload of the same length when it's queued.
+- Song search uses Spotify's catalog when it's set up, otherwise Deezer's (no key needed), with iTunes as a backup. Each song is matched to a YouTube upload of the same length when it's queued.
 - **Playback per listener:** people logged in with Spotify Premium (on the app's allowlist) hear Spotify, and everyone else hears the matched YouTube video. Everyone is synced to the same server clock, usually within 1–2 seconds.
 - You can also paste a YouTube link to queue any video.
 - Separate rooms: `https://your-site/?room=friday`.
+
+### The dance floor
+- Everyone in the room is a little avatar. Click the floor to walk somewhere; DJs stand behind the decks. People who vote Awesome bop, Lame voters stop dancing, and chat pops up as speech bubbles.
+- **🎨 My look:** pick a skin tone, shirt color and hat. Your look follows you to other rooms.
+- **🪙 Coins:** everyone starts with 10. You earn 1 for each song you listen to (once it has played 30 seconds, or half of a short song) and 1 for each Awesome your songs get.
+- **🍹 The bar:** spend coins on drinks for yourself, someone else, or a round for everyone. Your avatar walks to the bar, and the drink stays in hand for 15 minutes.
+- **🍅 / 🌹 Throwing:** click someone to throw a tomato or toss a rose (1 coin, one every 3 seconds). The 🍅 button next to the votes throws one at the current DJ.
+- **Played** tab: the last 30 songs, with who played them and the votes. Click **+ Queue** to add one to your own queue.
+- **Top DJs** tab: who has earned the most Awesomes in this room.
 
 ## How it works
 
 ```
 public/        static site (index.html, style.css, app.js) - no build step
-src/worker.js  API routes, the Room Durable Object, and MatchCache (saved YouTube matches)
+src/worker.js  API routes, the Room Durable Object (DJs, queues, votes, chat, floor, bar), and MatchCache (saved YouTube matches)
 ```
 
 The server never streams audio. It holds the room state (`current track + startedAt`), and each browser plays the track in its own Spotify or YouTube player at `now - startedAt`. A Durable Object alarm moves to the next song when the track's duration is up.
@@ -77,4 +86,5 @@ For local secrets, create `.dev.vars` with `YOUTUBE_API_KEY=...` etc. Spotify lo
 - YouTube videos with embedding disabled can't play. The search filters those out, but if one slips through, the DJ can skip.
 - Spotify and YouTube versions occasionally differ by a second or two (intros, silence).
 - SoundCloud isn't wired up yet. It would work the same way as pasted YouTube links, using the SoundCloud Widget API.
-- No accounts: identity is a name plus a random ID in the browser. Fine for a private room behind a password.
+- No accounts: identity is a name plus a random ID in the browser. Fine for a private room behind a password. Clearing the browser's site data starts you over with a new ID (and 10 coins).
+- Coins, points and the Played list are kept per room.

@@ -12,10 +12,12 @@ const store = {
 let userId = store.get("lr.userId");
 if (!userId) { userId = crypto.randomUUID(); store.set("lr.userId", userId); }
 
-let config = {};
+let config = { menu: {}, throwables: {}, looks: { skin: [], shirt: [], hat: [] }, floor: { x0: 4, x1: 96, y0: 60, y1: 96 } };
 let ws = null;
 let state = { users: [], djs: [], current: null };
 let myQueue = [];
+let playHistory = [];
+let topDjs = [];
 let clockOffset = 0; // serverTime - localTime
 let tunedIn = false;
 let myVotes = {}; // trackId -> 1 | -1
@@ -60,6 +62,16 @@ function api(path) {
 }
 
 const userById = (id) => state.users.find((u) => u.id === id);
+const me = () => userById(userId);
+
+let toastTimer;
+function toast(text) {
+  const t = $("toast");
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 3500);
+}
 
 // ------------------------------------------------------------ entry + socket
 
@@ -145,16 +157,33 @@ setInterval(() => ws?.readyState === 1 && syncClock(), 60_000);
 function onMessage(m) {
   switch (m.type) {
     case "time": timeHandler?.(m); break;
-    case "init":
+    case "init": {
       clockOffset = m.now - Date.now();
       $("messages").replaceChildren();
-      m.chat.forEach(renderChat);
+      m.chat.forEach((msg) => renderChat(msg, false));
+      // Your look follows you between rooms.
+      const look = store.get("lr.look");
+      if (look) send({ type: "look", look });
       break;
-    case "chat": renderChat(m.msg); break;
+    }
+    case "chat": renderChat(m.msg, true); break;
     case "queue": myQueue = m.queue; renderQueue(); break;
+    case "history": playHistory = m.history || []; topDjs = m.top || []; renderHistory(); renderTop(); break;
+    case "notice": toast(m.text); break;
+    case "move": {
+      const u = userById(m.id);
+      if (u) { u.x = m.x; u.y = m.y; }
+      const a = avatarEls.get(m.id);
+      if (a && !state.djs.includes(m.id)) placeAvatar(a, { x: m.x, y: m.y });
+      break;
+    }
+    case "fx":
+      if (m.kind === "throw") throwFx(m.from, m.to, m.item);
+      break;
     case "state":
       state = m;
       renderStage();
+      renderFloor();
       Player.sync();
       break;
   }
@@ -164,26 +193,10 @@ function onMessage(m) {
 
 function renderStage() {
   const cur = state.current;
-  const seats = $("seats");
-  seats.replaceChildren();
-  for (let i = 0; i < 5; i++) {
-    const id = state.djs[i];
-    const u = id && userById(id);
-    if (!u) { seats.append(el("div", { class: "seat" }, el("span", { class: "muted small" }, "open"))); continue; }
-    seats.append(el("div", {
-      class: `seat filled ${cur?.djId === id ? "playing" : ""} ${u.online ? "" : "offline"}`,
-    }, avatar(u), el("div", { class: "nm" }, u.name + (id === userId ? " (you)" : "")),
-       el("div", { class: "muted small" }, `★ ${u.score}`)));
-  }
-
   const onStage = state.djs.includes(userId);
   $("stageBtn").textContent = onStage ? "Step down" : "Step up to DJ";
   $("stageBtn").disabled = !onStage && state.djs.length >= 5;
-
-  const aud = $("audience");
-  aud.replaceChildren(...state.users.filter((u) => u.online && !state.djs.includes(u.id))
-    .map((u) => el("div", { class: "aud" }, avatar(u, "sm"), u.name)));
-  if (!aud.children.length) aud.append(el("span", { class: "muted small" }, "Everyone's on stage"));
+  $("coins").textContent = `🪙 ${me()?.coins ?? 0}`;
 
   if (cur) {
     const dj = userById(cur.djId);
@@ -198,7 +211,7 @@ function renderStage() {
     $("awesome").className = `vote ${mine === 1 ? "mine-up" : ""}`;
     $("lame").className = `vote ${mine === -1 ? "mine-down" : ""}`;
     const isDj = cur.djId === userId;
-    $("awesome").disabled = $("lame").disabled = isDj;
+    $("awesome").disabled = $("lame").disabled = $("throwAtDj").disabled = isDj;
     $("skip").hidden = !isDj;
   } else {
     $("npArt").removeAttribute("src");
@@ -207,7 +220,7 @@ function renderStage() {
     $("npDj").textContent = "Nobody's playing";
     $("awesomeCount").textContent = $("lameCount").textContent = "0";
     $("awesome").className = $("lame").className = "vote";
-    $("awesome").disabled = $("lame").disabled = true;
+    $("awesome").disabled = $("lame").disabled = $("throwAtDj").disabled = true;
     $("skip").hidden = true;
   }
 }
@@ -223,6 +236,7 @@ setInterval(() => {
 
 $("stageBtn").onclick = () => send({ type: state.djs.includes(userId) ? "stage_leave" : "stage_join" });
 $("skip").onclick = () => send({ type: "skip" });
+$("throwAtDj").onclick = () => state.current && send({ type: "throw", item: "tomato", to: state.current.djId });
 for (const [btn, v] of [["awesome", 1], ["lame", -1]]) {
   $(btn).onclick = () => {
     const cur = state.current;
@@ -232,11 +246,272 @@ for (const [btn, v] of [["awesome", 1], ["lame", -1]]) {
   };
 }
 
+// ------------------------------------------------------------ avatars
+
+const HATS = {
+  none: "",
+  hair: '<path d="M8.6 25 a11.4 11.6 0 0 1 22.8 0 q-3-5.5-11.4-5 q-8.4-.5-11.4 5z" fill="#3b2a20"/>',
+  cap: '<path d="M9 22 a11 10 0 0 1 22 0 z" fill="#e5484d"/><path d="M27 20.5 h8.5 a1.8 1.8 0 0 1 0 3.6 h-8.5 z" fill="#b8323a"/>',
+  beanie: '<path d="M9 22 a11 11 0 0 1 22 0 z" fill="#3b82f6"/><rect x="8.5" y="20" width="23" height="4.5" rx="2.2" fill="#2563eb"/><circle cx="20" cy="10.5" r="2.8" fill="#f1f5f9"/>',
+  headphones: '<path d="M8.5 24 a11.5 12 0 0 1 23 0" stroke="#1f2937" stroke-width="2.6" fill="none"/><rect x="5.5" y="21" width="5" height="9" rx="2.2" fill="#7c5cff"/><rect x="29.5" y="21" width="5" height="9" rx="2.2" fill="#7c5cff"/>',
+  crown: '<path d="M12 16 L12 8 L16 12 L20 5 L24 12 L28 8 L28 16 Z" fill="#f5c542" stroke="#b8860b" stroke-width=".8" stroke-linejoin="round"/>',
+  party: '<path d="M14 15 L20 1.5 L26 15 Z" fill="#ec4899"/><path d="M16.2 9.5 H23.8 M15 12.5 H25" stroke="#fde047" stroke-width="1.4"/><circle cx="20" cy="1.8" r="1.9" fill="#fde047"/>',
+};
+const isColor = (c) => /^#[0-9a-f]{6}$/i.test(c || "");
+
+// A little person, drawn facing right. headOnly crops to the head for small icons.
+function figureSvg(look, headOnly = false) {
+  const skin = isColor(look?.skin) ? look.skin : "#e8b48f";
+  const shirt = isColor(look?.shirt) ? look.shirt : "#7c5cff";
+  const hat = HATS[look?.hat] ?? "";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${headOnly ? "4 0 32 38" : "0 0 40 70"}" aria-hidden="true">
+    <ellipse cx="20" cy="68" rx="11" ry="2" fill="#0006"/>
+    <rect x="13" y="52" width="5" height="15" rx="2" fill="#2b2d42"/>
+    <rect x="22" y="52" width="5" height="15" rx="2" fill="#2b2d42"/>
+    <rect x="5" y="36" width="6" height="14" rx="3" fill="${shirt}"/>
+    <rect x="29" y="36" width="6" height="14" rx="3" fill="${shirt}"/>
+    <rect x="10" y="34" width="20" height="21" rx="6" fill="${shirt}"/>
+    <circle cx="8" cy="51" r="3" fill="${skin}"/>
+    <circle cx="32" cy="51" r="3" fill="${skin}"/>
+    <circle cx="20" cy="24" r="11" fill="${skin}"/>
+    <circle cx="18" cy="24" r="1.6" fill="#1b1b1b"/>
+    <circle cx="26" cy="24" r="1.6" fill="#1b1b1b"/>
+    <path d="M18 29 q4 3 8 0" stroke="#1b1b1b" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+    ${hat}
+  </svg>`;
+}
+
+const DJ_SPOTS = [24, 34, 44, 54, 64]; // x positions behind the decks
+const DJ_Y = 44;
+const avatarEls = new Map(); // userId -> { el, fig, drink, name, x, y }
+
+function spotFor(u) {
+  const i = state.djs.indexOf(u.id);
+  return i >= 0 ? { x: DJ_SPOTS[i], y: DJ_Y } : { x: u.x ?? 50, y: u.y ?? 80 };
+}
+
+function renderFloor() {
+  const cur = state.current;
+  $("floor").classList.toggle("music", Boolean(cur));
+  const keep = new Set();
+  for (const u of state.users) {
+    if (!u.online && !state.djs.includes(u.id)) continue;
+    keep.add(u.id);
+    let a = avatarEls.get(u.id);
+    if (!a) {
+      a = makeAvatar(u.id);
+      avatarEls.set(u.id, a);
+      $("avatars").append(a.el);
+    }
+    updateAvatar(a, u, cur);
+    placeAvatar(a, spotFor(u));
+  }
+  for (const [id, a] of avatarEls) {
+    if (!keep.has(id)) { a.el.remove(); avatarEls.delete(id); }
+  }
+}
+setInterval(renderFloor, 30_000); // lets finished drinks disappear
+
+function makeAvatar(id) {
+  const fig = el("div", { class: "fig" });
+  const drink = el("span", { class: "drink" });
+  const name = el("span", { class: "nm" });
+  const node = el("button", {
+    class: "av", type: "button",
+    onclick: (e) => { e.stopPropagation(); openAvatarMenu(id); },
+  }, fig, drink, name);
+  return { id, el: node, fig, drink, name, x: null, y: null, lookKey: "" };
+}
+
+function updateAvatar(a, u, cur) {
+  const key = JSON.stringify(u.look);
+  if (key !== a.lookKey) { a.fig.innerHTML = figureSvg(u.look); a.lookKey = key; }
+  a.name.textContent = u.name;
+  a.el.setAttribute("aria-label", u.id === userId ? `${u.name} (you)` : u.name);
+  const vote = cur?.votes?.[u.id];
+  const cls = a.el.classList;
+  cls.toggle("me", u.id === userId);
+  cls.toggle("dj", state.djs.includes(u.id));
+  cls.toggle("playing", cur?.djId === u.id);
+  cls.toggle("offline", !u.online);
+  cls.toggle("up", vote === 1);
+  cls.toggle("down", vote === -1);
+  const drink = u.drink && u.drink.until > serverNow() ? config.menu[u.drink.item] : null;
+  a.drink.textContent = drink ? drink.icon : "";
+  a.drink.title = drink ? drink.name : "";
+}
+
+// Walks an avatar to a spot (x, y are percentages of the floor).
+function placeAvatar(a, { x, y }) {
+  if (a.x === x && a.y === y) return;
+  const first = a.x === null;
+  const dist = first ? 0 : Math.hypot((x - a.x) * 1.6, y - a.y); // the floor is 16:10
+  const ms = first ? 0 : Math.round(Math.min(3000, Math.max(250, dist * 28)));
+  if (!first && x !== a.x) a.el.classList.toggle("left", x < a.x);
+  a.el.style.setProperty("--d", `${ms}ms`);
+  a.el.style.setProperty("--s", (0.8 + (0.3 * (y - 40)) / 56).toFixed(3)); // further back looks smaller
+  a.el.style.left = `${x}%`;
+  a.el.style.top = `${y}%`;
+  a.el.style.zIndex = String(Math.round(y * 10));
+  a.x = x;
+  a.y = y;
+  if (ms) {
+    a.el.classList.add("walking");
+    clearTimeout(a.walkTimer);
+    a.walkTimer = setTimeout(() => a.el.classList.remove("walking"), ms);
+  }
+}
+
+$("floor").addEventListener("click", (e) => {
+  closeAvatarMenu();
+  if (e.target.closest(".av, .pop")) return;
+  if (e.target.closest("#barArea")) return openBar(userId);
+  const r = $("floor").getBoundingClientRect();
+  const x = ((e.clientX - r.left) / r.width) * 100;
+  const y = ((e.clientY - r.top) / r.height) * 100;
+  if (y < config.floor.y0 - 8) return; // that's the wall or the stage
+  if (state.djs.includes(userId)) return toast("You're on stage. Step down to walk around.");
+  send({ type: "move", x, y });
+});
+
+function openAvatarMenu(id) {
+  const u = userById(id);
+  const a = avatarEls.get(id);
+  if (!u || !a) return;
+  const items = id === userId
+    ? [["🎨 Change my look", openLook], ["🍹 Get a drink", () => openBar(userId)]]
+    : [
+        ...Object.entries(config.throwables).map(([key, t]) => [`${t.icon} ${t.label} (🪙${t.price})`, () => send({ type: "throw", item: key, to: id })]),
+        ["🍹 Buy them a drink", () => openBar(id)],
+      ];
+  const menu = $("avatarMenu");
+  menu.replaceChildren(
+    el("div", { class: "pop-title" }, id === userId ? `${u.name} (you)` : u.name),
+    ...items.map(([label, fn]) => el("button", { type: "button", onclick: (e) => { e.stopPropagation(); closeAvatarMenu(); fn(); } }, label)),
+  );
+  const below = a.y < 60; // people on stage: open the menu under them
+  menu.classList.toggle("below", below);
+  menu.style.left = `${Math.min(84, Math.max(16, a.x))}%`;
+  menu.style.top = `${below ? a.y + 6 : Math.max(30, a.y - 17)}%`;
+  menu.hidden = false;
+}
+
+function closeAvatarMenu() { $("avatarMenu").hidden = true; }
+document.addEventListener("keydown", (e) => e.key === "Escape" && closeAvatarMenu());
+document.addEventListener("click", (e) => { if (!e.target.closest("#floor")) closeAvatarMenu(); });
+
+// Something flies from one person to another in an arc.
+function throwFx(fromId, toId, itemKey) {
+  const from = avatarEls.get(fromId);
+  const to = avatarEls.get(toId);
+  const item = config.throwables[itemKey];
+  if (!from || !to || !item) return;
+  const p = el("div", { class: "projectile" }, item.icon);
+  $("fx").append(p);
+  const x1 = from.x, y1 = from.y - 10, x2 = to.x, y2 = to.y - 10;
+  const start = performance.now();
+  const dur = 750;
+  const step = (now) => {
+    const k = Math.min(1, (now - start) / dur);
+    p.style.left = `${x1 + (x2 - x1) * k}%`;
+    p.style.top = `${y1 + (y2 - y1) * k - 60 * k * (1 - k)}%`;
+    p.style.transform = `translate(-50%, -50%) rotate(${k * 540}deg)`;
+    if (k < 1) return requestAnimationFrame(step);
+    p.remove();
+    landFx(to, itemKey);
+  };
+  requestAnimationFrame(step);
+}
+
+function landFx(a, itemKey) {
+  const mark = itemKey === "tomato" ? el("span", { class: "splat" }) : el("span", { class: "hearts" }, "💖");
+  a.el.append(mark);
+  if (itemKey === "tomato") {
+    a.el.classList.add("hit");
+    setTimeout(() => a.el.classList.remove("hit"), 800);
+  }
+  setTimeout(() => mark.remove(), 2700);
+}
+
+function showBubble(id, text) {
+  const a = avatarEls.get(id);
+  if (!a) return;
+  a.el.querySelector(".bubble")?.remove();
+  const b = el("span", { class: "bubble" }, text.length > 60 ? `${text.slice(0, 57)}…` : text);
+  a.el.append(b);
+  setTimeout(() => b.remove(), 5000);
+}
+
+// ------------------------------------------------------------ the bar
+
+function openBar(target) {
+  const online = state.users.filter((u) => u.online);
+  const sel = $("barFor");
+  sel.replaceChildren(
+    el("option", { value: userId }, "Me"),
+    ...online.filter((u) => u.id !== userId).map((u) => el("option", { value: u.id }, u.name)),
+    el("option", { value: "all" }, `Everyone here (${online.length})`),
+  );
+  sel.value = [...sel.options].some((o) => o.value === target) ? target : userId;
+  renderMenu();
+  $("barDialog").showModal();
+}
+
+function renderMenu() {
+  const to = $("barFor").value;
+  const n = to === "all" ? state.users.filter((u) => u.online).length : 1;
+  const coins = me()?.coins ?? 0;
+  $("barCoins").textContent = coins;
+  $("menu").replaceChildren(...Object.entries(config.menu).map(([key, d]) => {
+    const cost = d.price * n;
+    return el("button", {
+      type: "button", class: "drink-btn", disabled: cost > coins,
+      onclick: () => { send({ type: "buy", item: key, to }); $("barDialog").close(); },
+    }, el("span", { class: "drink-icon" }, d.icon), el("span", { class: "drink-name" }, d.name), el("span", { class: "price" }, `🪙 ${cost}`));
+  }));
+}
+
+$("barFor").onchange = renderMenu;
+$("barBtn").onclick = () => openBar(userId);
+$("barArea").addEventListener("keydown", (e) => e.key === "Enter" && openBar(userId));
+
+// ------------------------------------------------------------ your look
+
+let draftLook = null;
+
+function openLook() {
+  const fallback = { skin: config.looks.skin[0], shirt: config.looks.shirt[0], hat: "none" };
+  draftLook = { ...(me()?.look || store.get("lr.look") || fallback) };
+  renderLook();
+  $("lookDialog").showModal();
+}
+
+function renderLook() {
+  $("lookPreview").innerHTML = figureSvg(draftLook);
+  const swatches = (kind) => config.looks[kind].map((c) => el("button", {
+    type: "button", class: `swatch ${draftLook[kind] === c ? "on" : ""}`, style: `background:${c}`,
+    "aria-label": `${kind} ${c}`, onclick: () => { draftLook[kind] = c; renderLook(); },
+  }));
+  $("skinOpts").replaceChildren(...swatches("skin"));
+  $("shirtOpts").replaceChildren(...swatches("shirt"));
+  $("hatOpts").replaceChildren(...config.looks.hat.map((h) => {
+    const b = el("button", { type: "button", class: `hat-opt ${draftLook.hat === h ? "on" : ""}`, title: h, "aria-label": h, onclick: () => { draftLook.hat = h; renderLook(); } });
+    b.innerHTML = figureSvg({ ...draftLook, hat: h }, true);
+    return b;
+  }));
+}
+
+$("lookBtn").onclick = openLook;
+$("lookSave").onclick = () => {
+  store.set("lr.look", draftLook);
+  send({ type: "look", look: draftLook });
+};
+
 // ------------------------------------------------------------ chat
 
 const IMG_URL = /^https:\/\/\S+\.(gif|webp|png|jpe?g)(\?\S*)?$/i;
 
-function renderChat(m) {
+function renderChat(m, live) {
   const box = $("messages");
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   let node;
@@ -254,6 +529,7 @@ function renderChat(m) {
       body.append(m.text);
     }
     node = el("div", { class: "msg" }, avatar(u, "sm"), body);
+    if (live) showBubble(m.userId, gif ? "🖼️" : m.text);
   }
   box.append(node);
   while (box.children.length > 150) box.firstChild.remove();
@@ -289,10 +565,75 @@ async function loadGifs(q) {
   }
 }
 
+// ------------------------------------------------------------ tabs, history, top DJs
+
+for (const tab of document.querySelectorAll(".tab")) {
+  tab.onclick = () => {
+    for (const t of document.querySelectorAll(".tab")) {
+      t.classList.toggle("active", t === tab);
+      $(t.dataset.tab).hidden = t !== tab;
+    }
+  };
+}
+
+function renderHistory() {
+  const box = $("history");
+  if (!playHistory.length) {
+    box.replaceChildren(el("div", { class: "muted small" }, "Nothing has played yet."));
+    return;
+  }
+  box.replaceChildren(...playHistory.map((h) => el("div", { class: "item" },
+    el("img", { src: h.track.art || "", alt: "" }),
+    el("div", { class: "meta" },
+      el("div", { class: "t", title: h.track.title }, h.track.title),
+      el("div", { class: "a" }, `${h.track.artist} · played by ${h.djName}`),
+      el("div", { class: "a" }, `${new Date(h.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · 👍 ${h.awesome} · 👎 ${h.lame}`)),
+    el("div", { class: "acts" },
+      el("button", {
+        title: "Add to my queue",
+        onclick: (e) => { send({ type: "queue_add", track: h.track }); e.currentTarget.disabled = true; toast(`Added "${h.track.title}" to your queue.`); },
+      }, "+ Queue")))));
+}
+
+function renderTop() {
+  const box = $("top");
+  if (!topDjs.length) {
+    box.replaceChildren(el("li", { class: "muted small" }, "No Awesomes yet. Step up and play something good."));
+    return;
+  }
+  box.replaceChildren(...topDjs.map((u, i) => {
+    const face = el("span", { class: "mini" });
+    face.innerHTML = figureSvg(u.look, true);
+    return el("li", {}, el("b", { class: "rank" }, String(i + 1)), face, el("span", { class: "grow" }, u.name), el("span", { class: "muted" }, `★ ${u.score}`));
+  }));
+}
+renderHistory();
+renderTop();
+
 // ------------------------------------------------------------ search + queue
 
 const YT_URL = /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/)|youtu\.be\/|music\.youtube\.com\/watch\?(?:.*&)?v=)([\w-]{11})/;
 let lastResults = [];
+
+// The server tries Spotify, Deezer, then iTunes. If they're all busy, this
+// browser asks iTunes directly, since iTunes limits by address.
+async function searchCatalog(q) {
+  try {
+    return (await api(`/api/search?q=${encodeURIComponent(q)}`)).results;
+  } catch (err) {
+    if (/password/i.test(err.message)) throw err;
+    const r = await fetch(`https://itunes.apple.com/search?media=music&entity=song&limit=15&term=${encodeURIComponent(q)}`);
+    if (!r.ok) throw new Error(`Search is busy right now (${r.status}). Try again in a minute.`);
+    const data = await r.json();
+    return (data.results || []).map((t) => ({
+      title: t.trackName,
+      artist: t.artistName,
+      album: t.collectionName || "",
+      art: (t.artworkUrl100 || "").replace("100x100", "300x300"),
+      durationMs: t.trackTimeMillis || 0,
+    }));
+  }
+}
 
 $("searchForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -307,8 +648,7 @@ $("searchForm").addEventListener("submit", async (e) => {
       if (!v.embeddable) throw new Error("That video doesn't allow embedding, so it can't be played here.");
       lastResults = [{ ...v, resolved: true }];
     } else {
-      const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
-      lastResults = data.results;
+      lastResults = await searchCatalog(q);
     }
     status.textContent = lastResults.length ? "" : "No results.";
     renderResults();
@@ -330,8 +670,8 @@ function renderResults() {
       el("div", { class: "t", title: t.title }, t.title),
       el("div", { class: "a" }, `${t.artist} · ${fmt(t.durationMs)}`)),
     el("div", { class: "acts" },
-      el("button", { title: "Add to top of queue", onclick: (e) => addTrack(i, true, e.target) }, "⤒"),
-      el("button", { class: "primary", onclick: (e) => addTrack(i, false, e.target) }, "+ Queue")))));
+      el("button", { title: "Add to top of queue", onclick: (e) => addTrack(i, true, e.currentTarget) }, "⤒"),
+      el("button", { class: "primary", onclick: (e) => addTrack(i, false, e.currentTarget) }, "+ Queue")))));
 }
 
 async function addTrack(i, top, btn) {

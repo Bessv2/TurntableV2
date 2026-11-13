@@ -22,6 +22,7 @@
   <header>
     <div class="brand">🎧 <span id="roomName">main</span></div>
     <div class="controls">
+      <span id="coins" class="badge coins" title="Coins: earn 1 for each song you listen to and 1 for each Awesome your songs get">🪙 0</span>
       <button id="tuneIn" class="primary">▶ Tune in</button>
       <button id="spotifyBtn" hidden>Connect Spotify</button>
       <span id="sourceBadge" class="badge" hidden></span>
@@ -47,18 +48,33 @@
           <div class="vote-row">
             <button id="awesome" class="vote">👍 Awesome <b id="awesomeCount">0</b></button>
             <button id="lame" class="vote">👎 Lame <b id="lameCount">0</b></button>
+            <button id="throwAtDj" class="vote" title="Throw a tomato at the DJ (1 coin)" aria-label="Throw a tomato at the DJ">🍅</button>
             <button id="skip" hidden>Skip my song</button>
           </div>
           <div id="playNote" class="muted small"></div>
         </div>
       </div>
 
-      <h3>Stage</h3>
-      <div id="seats" class="seats"></div>
-      <button id="stageBtn" class="primary">Step up to DJ</button>
-
-      <h3>Audience</h3>
-      <div id="audience" class="audience"></div>
+      <div id="floor" class="floor" aria-label="Dance floor. Click anywhere on the floor to walk there.">
+        <div class="wall"><div class="lights"></div></div>
+        <div class="platform"></div>
+        <div class="deck"><span class="platter"></span><span class="mixer"></span><span class="platter"></span></div>
+        <div class="dancefloor"></div>
+        <div id="barArea" class="bar" title="The bar">
+          <div class="bar-sign">drinks</div>
+          <div class="shelf"><span>🍾</span><span>🍷</span><span>🍸</span><span>🧋</span></div>
+          <div class="counter"></div>
+        </div>
+        <div id="avatars" class="avatars"></div>
+        <div id="fx" class="fx"></div>
+        <div id="avatarMenu" class="pop" hidden></div>
+      </div>
+      <div class="floor-actions">
+        <button id="stageBtn" class="primary">Step up to DJ</button>
+        <button id="barBtn">🍹 Bar</button>
+        <button id="lookBtn">🎨 My look</button>
+      </div>
+      <p class="muted small hint">Click the floor to walk around. Click someone to throw a tomato, toss a rose, or buy them a drink.</p>
     </section>
 
     <!-- Chat -->
@@ -75,18 +91,67 @@
       </form>
     </section>
 
-    <!-- Queue -->
+    <!-- Queue, history, top DJs -->
     <section class="panel queue">
-      <form id="searchForm" class="search">
-        <input id="searchInput" placeholder="Search songs or paste a YouTube link">
-        <button class="primary">Search</button>
-      </form>
-      <div id="searchStatus" class="muted small"></div>
-      <div id="results" class="list"></div>
-      <h3>My queue <span class="muted small">(only you can see this)</span></h3>
-      <div id="queue" class="list"></div>
+      <div class="tabs">
+        <button class="tab active" data-tab="queueTab">Queue</button>
+        <button class="tab" data-tab="historyTab">Played</button>
+        <button class="tab" data-tab="topTab">Top DJs</button>
+      </div>
+      <div id="queueTab">
+        <form id="searchForm" class="search">
+          <input id="searchInput" placeholder="Search songs or paste a YouTube link">
+          <button class="primary">Search</button>
+        </form>
+        <div id="searchStatus" class="muted small"></div>
+        <div id="results" class="list"></div>
+        <h3>My queue <span class="muted small">(only you can see this)</span></h3>
+        <div id="queue" class="list"></div>
+      </div>
+      <div id="historyTab" hidden>
+        <div id="history" class="list"></div>
+      </div>
+      <div id="topTab" hidden>
+        <p class="muted small">Points come from Awesome votes on songs you played in this room.</p>
+        <ol id="top" class="top"></ol>
+      </div>
     </section>
   </main>
+
+  <!-- The bar -->
+  <dialog id="barDialog" class="dialog">
+    <form method="dialog" class="card">
+      <h2>🍹 The bar</h2>
+      <p class="muted small">You have <b id="barCoins">0</b> coins. You earn 1 for each song you listen to, and 1 for each Awesome your songs get.</p>
+      <label>Buying for <select id="barFor"></select></label>
+      <div id="menu" class="menu"></div>
+      <div class="row end"><button value="close">Close</button></div>
+    </form>
+  </dialog>
+
+  <!-- Avatar look -->
+  <dialog id="lookDialog" class="dialog">
+    <form method="dialog" class="card">
+      <h2>🎨 Your look</h2>
+      <div class="look-layout">
+        <div id="lookPreview" class="look-preview"></div>
+        <div class="look-opts">
+          <div class="muted small">Skin</div>
+          <div id="skinOpts" class="swatches"></div>
+          <div class="muted small">Shirt</div>
+          <div id="shirtOpts" class="swatches"></div>
+          <div class="muted small">On your head</div>
+          <div id="hatOpts" class="hats"></div>
+        </div>
+      </div>
+      <div class="row end">
+        <button value="cancel">Cancel</button>
+        <button id="lookSave" class="primary" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
 
   <script src="/app.js" type="module"></script>
 </body>
