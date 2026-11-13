@@ -15,7 +15,7 @@ A small Turntable.fm-style group listening room that runs entirely on Cloudflare
 
 ```
 public/        static site (index.html, style.css, app.js) - no build step
-src/worker.js  API routes + the Room Durable Object
+src/worker.js  API routes, the Room Durable Object, and MatchCache (saved YouTube matches)
 ```
 
 The server never streams audio. It holds the room state (`current track + startedAt`), and each browser plays the track in its own Spotify or YouTube player at `now - startedAt`. A Durable Object alarm moves to the next song when the track's duration is up.
@@ -46,7 +46,7 @@ Worker → **Settings** → **Variables and Secrets** → add these as type **Se
 
 Or from the CLI: `npx wrangler secret put YOUTUBE_API_KEY`.
 
-**YouTube key:** in Google Cloud → Credentials, restrict it to *YouTube Data API v3*. Don't add a website restriction, because the calls come from the Worker, not the browser. Quota: each new song match costs about 101 of the 10,000 free daily units, so roughly 95 new songs a day. Repeat matches are cached and free. Pasted links cost 1 unit.
+**YouTube key:** in Google Cloud → Credentials, restrict it to *YouTube Data API v3*. Don't add a website restriction, because the calls come from the Worker, not the browser. Quota: each new song match costs about 101 of the 10,000 free daily units, so roughly 95 new songs a day. Matches are saved for 30 days in the Worker's own storage (the `MatchCache` Durable Object), so queuing a song that's been matched before costs nothing. Pasted links cost 1 unit the first time.
 
 ### 4. Spotify (optional, up to 5 people)
 1. https://developer.spotify.com/dashboard → **Create app**. The app owner needs Premium.

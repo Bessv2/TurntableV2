@@ -83,7 +83,9 @@ $("entryForm").addEventListener("submit", (e) => {
   e.preventDefault();
   store.set("lr.name", $("nameInput").value.trim());
   if (config.passwordRequired) store.set("lr.pass", $("passInput").value);
+  $("entryError").textContent = "";
   $("entry").hidden = true;
+  retry = 0;
   connect();
 });
 
@@ -93,17 +95,31 @@ function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/${room}?${qs}`);
   ws.onopen = () => { retry = 0; $("conn").classList.add("on"); syncClock(); };
   ws.onmessage = (e) => onMessage(JSON.parse(e.data));
-  ws.onclose = (e) => {
+  ws.onclose = async () => {
     $("conn").classList.remove("on");
-    if (e.code === 1006 && retry > 2 && config.passwordRequired) {
-      // Most likely a bad password
+    // A dropped socket looks the same whether the password was wrong, the site
+    // was redeployed, or the network blipped, so ask the server which it was.
+    if (await passwordRejected()) {
       store.del("lr.pass");
-      $("entryError").textContent = "Couldn't connect. Check the room password.";
+      config.passwordRequired = true;
+      $("passRow").hidden = false;
+      $("entryError").textContent = "Wrong room password.";
       $("entry").hidden = false;
       return;
     }
     setTimeout(connect, Math.min(10000, 1000 * 2 ** retry++));
   };
+}
+
+// True only if the server answers and rejects the password. If the server
+// can't be reached, keep retrying instead of asking for the password again.
+async function passwordRejected() {
+  try {
+    const r = await fetch("/api/auth", { headers: { "x-room-pass": store.get("lr.pass") || "" } });
+    return r.status === 401;
+  } catch {
+    return false;
+  }
 }
 
 function send(msg) {

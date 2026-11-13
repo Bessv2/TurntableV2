@@ -33,9 +33,13 @@ export default {
       if (!checkPass(env, request.headers.get("x-room-pass"))) return json({ error: "Bad password" }, 401);
       try {
         switch (url.pathname) {
+          case "/api/auth": return json({ ok: true }); // lets the client tell a wrong password from a dropped connection
           case "/api/search": return json(await search(env, url.searchParams.get("q") || ""));
-          case "/api/resolve": return json(await cached(ctx, url, 30 * 86400, () => resolveYouTube(env, url.searchParams)));
-          case "/api/video": return json(await cached(ctx, url, 30 * 86400, () => videoInfo(env, url.searchParams.get("id"))));
+          case "/api/resolve": return json(await cached(env, ctx, resolveKey(url.searchParams), () => resolveYouTube(env, url.searchParams)));
+          case "/api/video": {
+            const id = (url.searchParams.get("id") || "").slice(0, 20);
+            return json(await cached(env, ctx, `video:${id}`, () => videoInfo(env, id)));
+          }
           case "/api/gifs": return json(await gifs(env, url.searchParams.get("q") || ""));
         }
       } catch (err) {
@@ -56,15 +60,42 @@ function checkPass(env, given) {
   return !env.ROOM_PASSWORD || given === env.ROOM_PASSWORD;
 }
 
-async function cached(ctx, url, ttl, produce) {
-  const key = new Request(`https://cache.internal${url.pathname}?${url.searchParams}`);
-  const hit = await caches.default.match(key);
-  if (hit) return hit.json();
+// YouTube lookups are saved in a Durable Object so a song that has been queued
+// before costs no YouTube quota. (Cloudflare's Cache API isn't guaranteed to
+// work on *.workers.dev, which is why this doesn't use it.)
+const MATCH_TTL_MS = 30 * 86400_000;
+const NO_MATCH_TTL_MS = 86400_000; // try again tomorrow if nothing matched
+
+async function cached(env, ctx, key, produce) {
+  const store = env.MATCHES.get(env.MATCHES.idFromName("global"));
+  const hit = await store.lookup(key).catch(() => null);
+  if (hit) return hit;
   const data = await produce();
-  ctx.waitUntil(caches.default.put(key, new Response(JSON.stringify(data), {
-    headers: { "content-type": "application/json", "cache-control": `max-age=${ttl}` },
-  })));
+  ctx.waitUntil(store.remember(key, data, data.youtubeId ? MATCH_TTL_MS : NO_MATCH_TTL_MS).catch(() => {}));
   return data;
+}
+
+// Same song, same key: case and sub-second duration differences don't matter.
+function resolveKey(params) {
+  const norm = (k) => (params.get(k) || "").trim().toLowerCase().slice(0, 150);
+  const seconds = Math.round(Number(params.get("durationMs") || 0) / 1000);
+  return `resolve:${norm("artist")}|${norm("title")}|${seconds}`;
+}
+
+export class MatchCache extends DurableObject {
+  async lookup(key) {
+    const entry = await this.ctx.storage.get(key);
+    if (!entry) return null;
+    if (entry.expires < Date.now()) {
+      await this.ctx.storage.delete(key);
+      return null;
+    }
+    return entry.data;
+  }
+
+  async remember(key, data, ttlMs) {
+    await this.ctx.storage.put(key, { data, expires: Date.now() + ttlMs });
+  }
 }
 
 // ---------------------------------------------------------------- Search
